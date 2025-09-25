@@ -40,11 +40,10 @@ int main(void)
     for(int i = 0;i < map->event_table.num_pmus; i++)
     {
         struct pmu_table_entry entry = map->event_table.pmus[i];
-        struct pmu_event pmu;
-        decompress_event(entry.pmu_name.offset, &pmu);
-    
-        print_pmu_event(&pmu);
-        printf("\n\n");
+
+        printf("==============\n");
+        printf("PMU: %s\n", get_pmu_name(entry));
+        printf("--------------\n");
 
         for(int x = 0; x < entry.num_entries; x++){
             struct pmu_event ev;

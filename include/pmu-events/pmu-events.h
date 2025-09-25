@@ -120,4 +120,6 @@ struct pmu_events_map {
 const struct pmu_events_map *map_for_cpu(struct perf_cpu cpu);
 
 void decompress_event(int offset, struct pmu_event *pe);
+
+const char *get_pmu_name(struct pmu_table_entry entry);
 #endif
