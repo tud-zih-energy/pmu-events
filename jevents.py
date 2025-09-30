@@ -912,6 +912,10 @@ out_update_last_result:
         return map;
 }
 
+const struct pmu_events_map *all_pmu_events_maps()
+{
+    return pmu_events_map;
+}
 
 const char *get_pmu_name(struct pmu_table_entry entry)
 {
@@ -1011,6 +1015,10 @@ such as "arm/cortex-a34".''',
 
 #ifdef __x86_64__
 #include <pmu-events/x86/util.h>
+#elif __aarch64__
+#include <pmu-events/aarch64/util.h>
+#else
+#error "Sorry, no pmu-events for your architecture yet!"
 #endif
 
 char *get_cpuid_allow_env_override(struct perf_cpu cpu)

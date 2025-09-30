@@ -1,11 +1,16 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-/* Originally from linux/tools/perf/pmu-events/pmu-events.h */
+
+/* Originally from linux/tools/perf/pmu-events/pmu-events.h
+ * commit: cec1e6e5d1ab33403b809f79cd20d6aff124ccfe
+ */
 #ifndef PMU_EVENTS_H
 #define PMU_EVENTS_H
 
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+
+#include <linux/perf_event.h>
 
 struct perf_cpu {
 	int16_t cpu;
@@ -117,9 +122,49 @@ struct pmu_events_map {
         struct pmu_metrics_table metric_table;
 };
 
+/*
+ * Returns the list of all events for the given cpu, or NULL on
+ * failure
+ */
 const struct pmu_events_map *map_for_cpu(struct perf_cpu cpu);
 
+/*
+ * Non-Linux functions
+ */
+
+/*
+ * Returns a list of all pmu event maps
+ */
+const struct pmu_events_map* all_pmu_events_maps();
+
+/*
+ * pmu_table_entries store the pmu events compressed.
+ *
+ * This function decompresses the event using the offset as its address
+ */
 void decompress_event(int offset, struct pmu_event *pe);
 
+/*
+ * For a pmu_table_entry, get the name of the pmu
+ */
 const char *get_pmu_name(struct pmu_table_entry entry);
+
+/*
+ * Resolve the event name "ev" in the pmu_events_map "map", and put the result into the
+ * given "pmu_ev"
+ *
+ * Return 0 on success, -1 on failure
+ */
+int get_event_by_name(const struct pmu_events_map* map, const char* ev, struct pmu_event* pmu_ev);
+
+/*
+ * For the given pmu_event, and cpu, set the config[12] fields of the given perf_event_attr
+ * structure to the values supplied by the event, so that the event can later be opened with
+ * perf_event_open.
+ *
+ * Returns 0 on success, -1 on failure
+ */
+int gen_attr_for_event(const struct pmu_event* ev, struct perf_cpu cpu,
+                       struct perf_event_attr* attr);
+
 #endif

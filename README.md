@@ -1,9 +1,59 @@
-Stand-alone version of the Linux pmu-events subsystem from
-linux/tools/perf/pmu-events.
+# pmu-events
 
-See examples/main.c for usage
+## Stand-alone library version of the pmu-events perf event naming code
 
-Original README follows
+The Linux tool `perf` contains information about a wealth of
+CPU PMU events.
+
+The code handling these event definitions lives in the `tools/perf/pmu-events` folder of 
+the Linux source code.
+
+This library takes the code for working with those event definitions
+and makes it available as a stand-alone library for external tools to reach 1:1
+compatability with perf event names.
+
+## Dependencies
+
+- A recent C compiler.
+- Python 3 to generate the pmu-events.c from the JSON event definitions.
+- Either an x86_64 or an ARM64 architecture.
+## Example
+
+For a detailed example, see `examples/main.c`.
+
+A short example that tries to find and open the "l3_misses" event on
+cpu 0 is given below:
+
+```c
+struct perf_cpu cpu;
+cpu.cpu = 0;
+
+struct pmu_event pmu_ev;
+if (get_event_by_name(map_for_cpu(cpu), "l3_misses", &pmu_ev) == -1)
+{
+    fprintf(stderr, "No event named: %s\n!", ev);
+    return;
+}
+
+struct perf_event_attr attr;
+attr.size = sizeof(attr);
+memset(&attr, 0, sizeof(attr));
+
+if (gen_attr_for_event(&pmu_ev, cpu, &attr) == -1)
+{
+    fprintf(stderr, "Can not generate perf_event_attr for: %s!\n", ev);
+    return;
+}
+
+int perf_fd = syscall(SYS_perf_event_open, &attr, -1, 0, -1, 0);
+```
+
+## License
+
+This project, like the original Linux kernel code is licensed under the terms
+of the GPL 2.0. For more information, see LICENSE.
+
+## Original pmu-events README
 
 The contents of this directory allow users to specify PMU events in their
 CPUs by their symbolic names rather than raw event codes (see example below).
