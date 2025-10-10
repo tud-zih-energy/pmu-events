@@ -47,32 +47,27 @@ void list_events()
     struct perf_cpu cpu;
     cpu.cpu = 0;
 
-    const struct pmu_events_map* maps = map_for_cpu(cpu);
+    const struct pmu_events_map* map = map_for_cpu(cpu);
     int i;
-    for (i = 0; maps[i].arch != NULL; i++)
+    printf("ARCH: %s\n", map->arch);
+    printf("CPUID: %s\n", map->cpuid);
+    printf("\n\n");
+
+    for (int i = 0; i < map->event_table.num_pmus; i++)
     {
-        const struct pmu_events_map map = maps[i];
+        struct pmu_table_entry entry = map->event_table.pmus[i];
 
-        printf("ARCH: %s\n", map.arch);
-        printf("CPUID: %s\n", map.cpuid);
-        printf("\n\n");
+        printf("==============\n");
+        printf("PMU: %s\n", get_pmu_name(entry));
+        printf("--------------\n");
 
-        for (int i = 0; i < map.event_table.num_pmus; i++)
+        for (int x = 0; x < entry.num_entries; x++)
         {
-            struct pmu_table_entry entry = map.event_table.pmus[i];
+            struct pmu_event ev;
+            decompress_event(entry.entries[x].offset, &ev);
 
-            printf("==============\n");
-            printf("PMU: %s\n", get_pmu_name(entry));
-            printf("--------------\n");
-
-            for (int x = 0; x < entry.num_entries; x++)
-            {
-                struct pmu_event ev;
-                decompress_event(entry.entries[x].offset, &ev);
-
-                print_pmu_event(&ev);
-                printf("\n\n");
-            }
+            print_pmu_event(&ev);
+            printf("\n\n");
         }
     }
 }
