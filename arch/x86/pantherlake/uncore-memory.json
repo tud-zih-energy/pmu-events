@@ -16,24 +16,6 @@
         "Unit": "iMC"
     },
     {
-        "BriefDescription": "Any Rank at Hot state",
-        "Counter": "0,1,2,3,4",
-        "EventCode": "0x19",
-        "EventName": "UNC_M_DRAM_THERMAL_HOT",
-        "Experimental": "1",
-        "PerPkg": "1",
-        "Unit": "iMC"
-    },
-    {
-        "BriefDescription": "Any Rank at Warm state",
-        "Counter": "0,1,2,3,4",
-        "EventCode": "0x1A",
-        "EventName": "UNC_M_DRAM_THERMAL_WARM",
-        "Experimental": "1",
-        "PerPkg": "1",
-        "Unit": "iMC"
-    },
-    {
         "BriefDescription": "Total number of read and write byte transfers to/from DRAM, in 32B chunk, per DDR channel. Counter increments by 1 after sending  or receiving 32B chunk data.",
         "Counter": "0,1,2,3,4",
         "EventCode": "0x3C",
