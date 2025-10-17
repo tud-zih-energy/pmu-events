@@ -658,6 +658,11 @@ int gen_attr_for_event(const struct pmu_event* ev, struct perf_cpu cpu,
     {
         struct assignment asn = asn_list.assignments[asn_nr];
 
+        if (strcmp(asn.key, "period") == 0)
+        {
+            continue;
+        }
+
         char* config_def_str = get_format_file_content(asn.key, cpu);
         if (config_def_str == NULL)
         {
