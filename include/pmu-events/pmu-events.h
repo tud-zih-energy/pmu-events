@@ -211,7 +211,7 @@ int get_event_by_name(const struct pmu_instance* pmu_instance, const char* ev,
  *
  * Returns 0 on success, -1 on failure
  */
-int gen_attr_for_event(struct pmu_instance* pmu_instance, struct pmu_event* ev,
+int gen_attr_for_event(const struct pmu_instance* pmu_instance, const struct pmu_event* ev,
                        struct perf_event_attr* attr);
 
 #endif

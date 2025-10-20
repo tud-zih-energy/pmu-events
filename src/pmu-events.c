@@ -636,7 +636,7 @@ int read_perf_type(const struct pmu_instance* pmu_instance)
     return res;
 }
 
-int gen_attr_for_event(struct pmu_instance* pmu_instance, struct pmu_event* ev,
+int gen_attr_for_event(const struct pmu_instance* pmu_instance, const struct pmu_event* ev,
                        struct perf_event_attr* attr)
 {
     if ((attr->type = read_perf_type(pmu_instance)) == -1)
