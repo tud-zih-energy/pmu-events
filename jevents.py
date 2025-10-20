@@ -912,11 +912,6 @@ out_update_last_result:
         return map;
 }
 
-const struct pmu_events_map *all_pmu_events_maps()
-{
-    return pmu_events_map;
-}
-
 const char *get_pmu_name(struct pmu_table_entry entry)
 {
     return &big_c_string[entry.pmu_name.offset];

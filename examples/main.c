@@ -1,16 +1,18 @@
+#include <assert.h>
 #include <pmu-events/pmu-events.h>
 
 #include <errno.h>
 #include <linux/perf_event.h>
 #include <signal.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
 void print_pmu_event(struct pmu_event *ev)
 {
-    printf("  name: %s\n", ev->name);
+    printf("  NAME: %s\n", ev->name);
     printf("    compat: %s\n", ev->compat);
     printf("    event: %s\n", ev->event);
     printf("    desc: %s\n", ev->desc);
@@ -44,32 +46,57 @@ void print_help()
  */
 void list_events()
 {
-    struct perf_cpu cpu;
-    cpu.cpu = 0;
 
-    const struct pmu_events_map* map = map_for_cpu(cpu);
-    int i;
-    printf("ARCH: %s\n", map->arch);
-    printf("CPUID: %s\n", map->cpuid);
-    printf("\n\n");
+    struct pmus pmus;
+    get_pmus(&pmus);
 
-    for (int i = 0; i < map->event_table.num_pmus; i++)
+    for (int cur_pmu_class_id = 0; cur_pmu_class_id < pmus.num_classes; cur_pmu_class_id++)
     {
-        struct pmu_table_entry entry = map->event_table.pmus[i];
+        const struct pmu_class* pmu_class = &pmus.classes[cur_pmu_class_id];
+        printf("CLASS: %s\n", pmu_class->name);
 
-        printf("==============\n");
-        printf("PMU: %s\n", get_pmu_name(entry));
-        printf("--------------\n");
+        printf("INSTANCES:\n");
+        for (int cur_pmu_instance_id = 0; cur_pmu_instance_id < pmu_class->num_instances;
+             cur_pmu_instance_id++)
 
-        for (int x = 0; x < entry.num_entries; x++)
+        {
+            const struct pmu_instance* pmu_instance = &pmu_class->instances[cur_pmu_instance_id];
+            printf("\tINSTANCE: \"%s\" ", pmu_instance->name);
+
+            printf("CPUS: ");
+            for (int cur_range_id = 0; cur_range_id < pmu_instance->cpus.len; cur_range_id++)
+            {
+                struct range* cur_range = &pmu_instance->cpus.ranges[cur_range_id];
+                if (cur_range->start == cur_range->end)
+                {
+                    printf("%lu", cur_range->start);
+                }
+                else
+                {
+
+                    printf("%lu-%lu", cur_range->start, cur_range->end);
+                }
+
+                if (cur_range_id + 1 != pmu_instance->cpus.len)
+                {
+                    printf(", ");
+                }
+            }
+            printf("\n");
+        }
+        printf("EVENTS:\n");
+
+        for (int x = 0; x < pmu_class->instances[0].num_entries; x++)
         {
             struct pmu_event ev;
-            decompress_event(entry.entries[x].offset, &ev);
+            decompress_event(pmu_class->instances[0].entries[x].offset, &ev);
 
             print_pmu_event(&ev);
             printf("\n\n");
         }
     }
+
+    free_pmus(&pmus);
 }
 
 bool stop = false;
@@ -79,54 +106,104 @@ void sighandler(int signal [[maybe_unused]])
     stop = true;
 }
 
+struct whole_ev
+{
+    struct pmu_instance* instance;
+    struct pmu_event ev;
+    struct perf_event_attr attr;
+    int fd;
+};
+
 /*
  * Looks up the event "ev" on cpu 0
  * and then reads it using perf every second
  */
 void read_event(char* ev)
 {
-    struct perf_cpu cpu;
-    cpu.cpu = 0;
+    struct pmus pmus;
 
-    struct pmu_event pmu_ev;
-    if (get_event_by_name(map_for_cpu(cpu), ev, &pmu_ev) == -1)
+    get_pmus(&pmus);
+
+    struct whole_ev* evs = NULL;
+    int num_evs = 0;
+
+    for (size_t cur_class_id = 0; cur_class_id < pmus.num_classes; cur_class_id++)
     {
-        fprintf(stderr, "No event named: %s\n!", ev);
+        struct pmu_class* pmu_class = &pmus.classes[cur_class_id];
+        for (size_t cur_instance_id = 0; cur_instance_id < pmu_class->num_instances;
+             cur_instance_id++)
+        {
+            struct pmu_instance* cur_instance = &pmu_class->instances[cur_instance_id];
+
+            struct pmu_event pmu_ev;
+            if (get_event_by_name(cur_instance, ev, &pmu_ev) == 0)
+            {
+                num_evs++;
+                evs = realloc(evs, sizeof(struct whole_ev) * num_evs);
+                evs[num_evs - 1].ev = pmu_ev;
+                evs[num_evs - 1].instance = cur_instance;
+            }
+        }
+    }
+
+    if (num_evs == 0)
+    {
+        free_pmus(&pmus);
+        fprintf(stderr, "No event matches: %s\n!", ev);
         return;
     }
 
-    struct perf_event_attr attr;
-    attr.size = sizeof(attr);
-    memset(&attr, 0, sizeof(attr));
-
-    if (gen_attr_for_event(&pmu_ev, cpu, &attr) == -1)
+    for (int ev_id = 0; ev_id < num_evs; ev_id++)
     {
-        fprintf(stderr, "Can not generate perf_event_attr for: %s!\n", ev);
-        return;
+        evs[ev_id].attr.size = sizeof(struct perf_event_attr);
+        memset(&evs[ev_id].attr.size, 0, sizeof(struct perf_event_attr));
+
+        if (gen_attr_for_event(evs[ev_id].instance, &evs[ev_id].ev, &evs[ev_id].attr) == -1)
+        {
+            free_pmus(&pmus);
+            fprintf(stderr, "Can not generate perf_event_attr for: %s!\n", evs[ev_id].ev.name);
+            return;
+        }
     }
 
-    int perf_fd = syscall(SYS_perf_event_open, &attr, -1, 0, -1, 0);
-
-    if (perf_fd == -1)
+    for (int ev_id = 0; ev_id < num_evs; ev_id++)
     {
-        fprintf(stderr, "Could not open event: %s!\n", strerror(errno));
-        return;
+        evs[ev_id].fd = syscall(SYS_perf_event_open, &evs[ev_id].attr, -1,
+                                evs[ev_id].instance->cpus.ranges[0].start, -1, 0);
+
+        if (evs[ev_id].fd == -1)
+        {
+            fprintf(stderr, "Could not open event: %s!\n", strerror(errno));
+            return;
+        }
     }
 
-    fprintf(stderr, "Reading %s every second until Ctrl+C\n", ev);
+    fprintf(stderr, "Reading: \n");
+
+    for (int ev_id = 0; ev_id < num_evs; ev_id++)
+    {
+        fprintf(stderr, "\t%s::%s (CPU: %lu)\n", evs[ev_id].instance->name, evs[ev_id].ev.name,
+                evs[ev_id].instance->cpus.ranges[0].start);
+    }
+    fprintf(stderr, "Every second until Ctrl+C\n");
 
     signal(SIGTERM, sighandler);
     while (!stop)
     {
         long long count;
-        if (read(perf_fd, &count, sizeof(count)) != sizeof(count))
+        for (int ev_id = 0; ev_id < num_evs; ev_id++)
         {
-            fprintf(stderr, "Could not read event %s: %s!\n", ev, strerror(errno));
-        }
+            if (read(evs[ev_id].fd, &count, sizeof(count)) != sizeof(count))
+            {
+                fprintf(stderr, "Could not read event %s: %s!\n", ev, strerror(errno));
+            }
 
-        printf("%s: %llu\n", ev, count);
+            printf("%s::%s: %llu\n", evs[ev_id].instance->name, evs[ev_id].ev.name, count);
+        }
         sleep(1);
     }
+
+    free_pmus(&pmus);
 }
 
 int main(int argc, char** argv)

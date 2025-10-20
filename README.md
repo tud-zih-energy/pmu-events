@@ -21,33 +21,6 @@ compatability with perf event names.
 
 For a detailed example, see `examples/main.c`.
 
-A short example that tries to find and open the "l3_misses" event on
-cpu 0 is given below:
-
-```c
-struct perf_cpu cpu;
-cpu.cpu = 0;
-
-struct pmu_event pmu_ev;
-if (get_event_by_name(map_for_cpu(cpu), "l3_misses", &pmu_ev) == -1)
-{
-    fprintf(stderr, "No event named: %s\n!", ev);
-    return;
-}
-
-struct perf_event_attr attr;
-attr.size = sizeof(attr);
-memset(&attr, 0, sizeof(attr));
-
-if (gen_attr_for_event(&pmu_ev, cpu, &attr) == -1)
-{
-    fprintf(stderr, "Can not generate perf_event_attr for: %s!\n", ev);
-    return;
-}
-
-int perf_fd = syscall(SYS_perf_event_open, &attr, -1, 0, -1, 0);
-```
-
 ## License
 
 This project, like the original Linux kernel code is licensed under the terms

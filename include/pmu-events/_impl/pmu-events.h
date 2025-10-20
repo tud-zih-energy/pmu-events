@@ -39,26 +39,6 @@ enum ATTR_VAR
 };
 
 /*
- * A range, e.g. "bit 5", "bit 4-6",...
- */
-struct range
-{
-    uint64_t start;
-    uint64_t end;
-};
-
-/*
- * A list of ranges, e.g.:
- * len = 2
- * bit 4, bit 7-14
- */
-struct range_list
-{
-    size_t len;
-    struct range* ranges;
-};
-
-/*
  * A combination of a perf_event_attr member with the
  * range list it applies to.
  */
@@ -85,5 +65,5 @@ void free_assignment_list(struct assignment_list* list);
 int apply_range_list_to_val(unsigned long long* config, uint64_t to_apply, struct range_list* list);
 int apply_config_def_to_attr(struct perf_event_attr* attr, uint64_t val, struct config_def* def);
 
-char* get_format_file_content(char* fmt_file, struct perf_cpu cpu);
-int read_perf_type(struct perf_cpu cpu);
+char* get_format_file_content(char* fmt_file, const struct pmu_instance* pmu);
+int read_perf_type(const struct pmu_instance* pmu_instance);

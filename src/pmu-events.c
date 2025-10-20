@@ -1,13 +1,21 @@
+#include <assert.h>
+#include <complex.h>
 #include <pmu-events/pmu-events.h>
 
 #include <pmu-events/_impl/pmu-events.h>
 
 #include <dirent.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
+/*
+ * Base path for all PMU devices in sysfs[:we
+ */
+static const char* pmu_devices_base = "/sys/bus/event_source/devices";
 
 /*
  * performs: result = base + "/" + filename
@@ -28,8 +36,13 @@ static char* concat_path(const char* base, const char* filename)
 }
 
 /*
+ * For a pmu_table_entry, get the name of the pmu
+ */
+const char* get_pmu_name(struct pmu_table_entry entry);
+/*
  * Checks if "num" is in any of the ranges in range_list
  */
+
 static bool in_range_list(uint64_t num, struct range_list* range_list)
 {
     int i = 0;
@@ -413,8 +426,19 @@ int apply_range_list_to_val(unsigned long long* config, uint64_t to_apply, struc
 }
 
 /*
- * Applies the value "val" to the correct member of perf_event_attr by using
- * the config_def->range range_list and apply_range_list_to_val()
+ * For the event assignment string "event" of the form "event=0x40,umask=1",
+ * set the type, config, config1 and config2 correctly in perf_event_attr
+ * for the given cpu.
+ *
+ * For every assignment in the "event" string, the key specifies a file
+ * in [pmu path for cpu]/format that describes how the value
+ * of the assignment is put into the bits of a perf_event_attr member.
+ *
+ * On a recent AMD cpu, for example, /sys/bus/event_source/devices/cpu/format/event
+ * contains: "config:0-7,32-35"
+ *
+ * This means, that the lowest 8 bits of "event=[value]" are put into
+ * attr->config[bits0-7], with the next 4 bits being put into attr->config[bits32-35]
  */
 int apply_config_def_to_attr(struct perf_event_attr* attr, uint64_t val, struct config_def* def)
 {
@@ -433,122 +457,109 @@ int apply_config_def_to_attr(struct perf_event_attr* attr, uint64_t val, struct 
 }
 
 /*
- * Returns the syfs PMU path for the specific cpu
- *
- * Returns NULL on error
+ * Get a range list representing all CPUs in the system.
  */
-char* get_pmu_path_for_cpu(struct perf_cpu cpu)
+static struct range_list all_cpus()
 {
-    /*
-     * First case (mostly x86 CPUs): there is a "cpu" PMU.
-     *
-     * If that PMU exists, then it is automatically responsible for all
-     * cpu cores.
-     */
-    if (access("/sys/bus/event_source/devices/cpu/", F_OK) == F_OK)
-    {
-        return strdup("/sys/bus/event_source/devices/cpu/");
-    }
+    struct range_list res;
 
-    /*
-     * Second case (mostly observed on ARM and on Intel's P/E-Core systems):
-     *
-     * On architectures without a "cpu" PMU, the PMUs that are responsible
-     * for the CPU cores contain a "cpus" file.
-     *
-     * This "cpus" file contains a range list of the CPUs it is responsible for.
-     *
-     * For example (ARM Neoverse N1 architecture):
-     * There is one PMU folder in /sys/bus/event_source/devices/ with a "cpus" file.
-     *
-     *      /sys/bus/event_source/devices/armv8_pmuv3_0/cpus
-     *
-     * That contains the string "0-79". That means it is responsible for the cores
-     * 0 through 79 (which in fact are all the cores on that system.
-     *
-     * We simply iterate here through all PMU folders in /sys/bus/event_source/devices,
-     * checking if they contain a "cpus" file and then checking if the
-     * given cpu is in the range of the PMU.
-     */
-    const char* pmu_dir = "/sys/bus/event_source/devices";
-    DIR* pmu_devices = opendir(pmu_dir);
-    if (pmu_devices == NULL)
-    {
-        return NULL;
-    }
-    struct dirent* ent;
-    while ((ent = readdir(pmu_devices)) != NULL)
-    {
-        if ((strcmp(ent->d_name, ".") == 0) || (strcmp(ent->d_name, "..") == 0))
-        {
-            continue;
-        }
-        char* pmu_path = concat_path(pmu_dir, ent->d_name);
-        if (pmu_path == NULL)
-        {
-            closedir(pmu_devices);
-            return NULL;
-        }
-        char* cpus_path = concat_path(pmu_path, "cpus");
-        if (cpus_path == NULL)
-        {
-            closedir(pmu_devices);
-            free(pmu_path);
-            return NULL;
-        }
-
-        char* content = get_file_content(cpus_path);
-        free(cpus_path);
-        if (content == NULL)
-        {
-            free(pmu_path);
-            continue;
-        }
-
-        struct range_list range_list;
-        if (parse_range_list(content, &range_list) == -1)
-        {
-            free(content);
-            closedir(pmu_devices);
-            free(pmu_path);
-            return NULL;
-        }
-        free(content);
-
-        if (in_range_list(cpu.cpu, &range_list))
-        {
-            closedir(pmu_devices);
-            free_range_list(&range_list);
-            return pmu_path;
-        }
-    }
-    closedir(pmu_devices);
-    return NULL;
+    res.ranges = malloc(sizeof(struct range));
+    res.len = 1;
+    res.ranges[0].start = 0;
+    res.ranges[0].end = sysconf(_SC_NPROCESSORS_ONLN) - 1;
+    return res;
 }
 
 /*
- * Returns the content of the [pmu for cpu]/format format file
- * "fmt_file". This is usually a range list string, parseable
- * by parse_range_list() (e.g. "config1:0,23-42")
+ * Get [pmu_path]/cpus as a range_list
+ *
+ * Returns 0 on success, -1 on failure.
+ *
+ * If get_cpus_for() succeeds, the caller is responsible for free-ing range_list with
+ * free_range_list()
+ */
+static int get_cpus_for(const char* pmu_path, struct range_list* range_list)
+{
+    char* cpus_path = concat_path(pmu_path, "cpus");
+    if (access(cpus_path, F_OK) != F_OK)
+    {
+        free(cpus_path);
+        return -1;
+    }
+
+    char* content = get_file_content(cpus_path);
+    free(cpus_path);
+    if (content == NULL)
+    {
+        return -1;
+    }
+
+    if (parse_range_list(content, range_list) == -1)
+    {
+        free(content);
+        return -1;
+    }
+    free(content);
+    return 0;
+}
+
+/*
+ * Get [pmu_path]/cpumask as a range_list
+ *
+ * Returns 0 on success, -1 on failure.
+ *
+ * If get_cpumask_for() succeeds, the caller is responsible for free-ing range_list with
+ * free_range_list()
+ */
+static int get_cpumask_for(const char* pmu_path, struct range_list* range_list)
+{
+    char* cpus_path = concat_path(pmu_path, "cpumask");
+    if (access(cpus_path, F_OK) != F_OK)
+    {
+        free(cpus_path);
+        return -1;
+    }
+
+    char* content = get_file_content(cpus_path);
+    free(cpus_path);
+    if (content == NULL)
+    {
+        return -1;
+    }
+
+    if (parse_range_list(content, range_list) == -1)
+    {
+        free(content);
+        return -1;
+    }
+    free(content);
+    return 0;
+}
+
+/*
+ * Returns the content of  [path-to-pmu_instance]/format/[fmt_file]
+ * This is usually a config def string, parseable
+ * by parse_config_def() (e.g. "config1:0,23-42")
  *
  * Returns NULL on error.
+ *
+ * The string returned by get_format_file_content needs to be freed by the caller.
  */
-char* get_format_file_content(char* fmt_file, struct perf_cpu cpu)
+char* get_format_file_content(char* fmt_file, const struct pmu_instance* pmu_instance)
 {
-    char* pmu_path = get_pmu_path_for_cpu(cpu);
-    if (pmu_path == NULL)
+    char* full_path = concat_path(pmu_devices_base, pmu_instance->name);
+    if (full_path == NULL)
     {
         return NULL;
     }
-
-    char* format_path = concat_path(pmu_path, "format/");
+    char* format_path = concat_path(full_path, "format/");
     if (format_path == NULL)
     {
-        free(pmu_path);
+        free(full_path);
         return NULL;
     }
+    free(full_path);
 
-    free(pmu_path);
     char* path = concat_path(format_path, fmt_file);
     free(format_path);
     if (path == NULL)
@@ -563,29 +574,29 @@ char* get_format_file_content(char* fmt_file, struct perf_cpu cpu)
 }
 
 /*
- * Reads the perf_event_attr.type from [pmu path for cpu]/type
+ * Reads the perf_event_attr.type from [path to pmu_instance]/type
  *
  * Returns the perf_event_attr.type or -1 on failure.
  */
-int read_perf_type(struct perf_cpu cpu)
+int read_perf_type(const struct pmu_instance* pmu_instance)
 {
-    char* pmu_path = get_pmu_path_for_cpu(cpu);
-
-    if (pmu_path == NULL)
+    char* full_path = concat_path(pmu_devices_base, pmu_instance->name);
+    if (full_path == NULL)
     {
         return -1;
     }
-
-    char* type_path = concat_path(pmu_path, "type");
-    free(pmu_path);
+    char* type_path = concat_path(full_path, "type");
     if (type_path == NULL)
     {
-        free(pmu_path);
+        free(full_path);
         return -1;
     }
+    free(full_path);
+
     int fd = open(type_path, O_RDONLY);
     if (fd == -1)
     {
+        free(type_path);
         return -1;
     }
 
@@ -625,28 +636,14 @@ int read_perf_type(struct perf_cpu cpu)
     return res;
 }
 
-/*
- * For the event assignment string "event" of the form "event=0x40,umask=1",
- * set the type, config, config1 and config2 correctly in perf_event_attr
- * for the given cpu.
- *
- * For every assignment in the "event" string, the key specifies a file
- * in [pmu path for cpu]/format that describes how the value
- * of the assignment is put into the bits of a perf_event_attr member.
- *
- * On a recent AMD cpu, for example, /sys/bus/event_source/devices/cpu/format/event
- * contains: "config:0-7,32-35"
- *
- * This means, that the lowest 8 bits of "event=[value]" are put into
- * attr->config[bits0-7], with the next 4 bits being put into attr->config[bits32-35]
- */
-int gen_attr_for_event(const struct pmu_event* ev, struct perf_cpu cpu,
+int gen_attr_for_event(struct pmu_instance* pmu_instance, struct pmu_event* ev,
                        struct perf_event_attr* attr)
 {
-    if ((attr->type = read_perf_type(cpu)) == -1)
+    if ((attr->type = read_perf_type(pmu_instance)) == -1)
     {
         return -1;
     }
+
     struct assignment_list asn_list;
     if (parse_assignment_list(ev->event, &asn_list) == -1)
     {
@@ -663,7 +660,7 @@ int gen_attr_for_event(const struct pmu_event* ev, struct perf_cpu cpu,
             continue;
         }
 
-        char* config_def_str = get_format_file_content(asn.key, cpu);
+        char* config_def_str = get_format_file_content(asn.key, pmu_instance);
         if (config_def_str == NULL)
         {
             free_assignment_list(&asn_list);
@@ -678,6 +675,8 @@ int gen_attr_for_event(const struct pmu_event* ev, struct perf_cpu cpu,
             return -1;
         }
 
+        free(config_def_str);
+
         if (apply_config_def_to_attr(attr, asn.value, &conf_def) == -1)
         {
             free_config_def(&conf_def);
@@ -685,31 +684,321 @@ int gen_attr_for_event(const struct pmu_event* ev, struct perf_cpu cpu,
             free(config_def_str);
             return -1;
         }
+        free_config_def(&conf_def);
     }
+    free_assignment_list(&asn_list);
     return 0;
 }
 
 /*
- * Searches for the perf event "ev" in the pmu_events_map "map", returning the result
- * in "pmu_ev".
+ * Searches for the perf event "ev" in the pmu_instance "pmu_instance",
+ * returning the result in "pmu_ev".
  *
  * On success, 0 is returned and the event is put into "pmu_ev"
  * On failure, -1 is returned.
  */
-int get_event_by_name(const struct pmu_events_map* map, const char* ev, struct pmu_event* pmu_ev)
+int get_event_by_name(const struct pmu_instance* pmu_instance, const char* ev,
+                      struct pmu_event* pmu_ev)
 {
-    for (int i = 0; i < map->event_table.num_pmus; i++)
+    for (size_t x = 0; x < pmu_instance->num_entries; x++)
     {
-        struct pmu_table_entry entry = map->event_table.pmus[i];
-        for (int x = 0; x < entry.num_entries; x++)
-        {
-            decompress_event(entry.entries[x].offset, pmu_ev);
+        decompress_event(pmu_instance->entries[x].offset, pmu_ev);
 
-            if (strcmp(pmu_ev->name, ev) == 0)
-            {
-                return 0;
-            }
+        if (strcmp(pmu_ev->name, ev) == 0)
+        {
+            return 0;
         }
     }
+
     return -1;
+}
+
+/*
+ * Return a list of all instances for the given pmu_class class.
+ *
+ * The PMUs given by the underlying perf/pmu-events mechanism are
+ * PMU _classes_, meaning that for every class there can be one to many instances.
+ *
+ * Every PMU instance in a given Linux installation has a folder in
+ *      "/sys/bus/event_source/devices/"
+ *
+ * This function returns for a given struct pmu_class, the PMU instances found
+ * in the system.
+ *
+ * There are two mechanisms for matching the pmu_class to PMU instances:
+ *
+ * - The PMU class name is "default_core": This PMU class contains the PMU events tied
+ *   to the cores of the processor.
+ *   - One most Intel and AMD x86 systems, there is a single "cpu" PMU instance.
+ *     That PMU instance is responsible for all the events in the "default_core"
+ *     PMU class on all cores.
+ *   - If there is no "cpu" PMU instance folder, then the PMU instance folders that
+ *     contain a "cpus" file belong to the "default_core" PMU class.
+ *     This "cpus" file also tells you which cores this PMU instance is responsible for.
+ *
+ * - The PMU class is something other, like "uncore_arb".
+ *   - If thre is only one instance of the PMU class,  the sysfs PMU instance
+       folder is called just "[PMU CLASS]"
+ *   - If they are n different instances of a PMU, then the instances are called
+ *     "[PMU CLASS]_0" to "[PMU_CLASS]_(n-1)"
+ *
+ *
+ * If class->num_instances is 0, then no PMU instances belonging to that PMU class could be
+ * found. Sometimes, a kernel module might need to be loaded to make a PMU instance available.
+ *
+ * If class->num_instances is != 0, then the caller is responsible for free-ing the pmu_class
+ * with free_pmu_class();
+ */
+static int get_all_pmu_instances_for(struct pmu_class* class)
+{
+    DIR* dfd;
+    struct dirent* dp;
+    bool is_cpu = false;
+
+    class->instances = NULL;
+    class->num_instances = 0;
+
+    if ((dfd = opendir(pmu_devices_base)) == NULL)
+    {
+        return -1;
+    }
+
+    if (strcmp(class->name, "default_core") == 0)
+    {
+        is_cpu = true;
+    }
+
+    /*
+     * Iterate over "/sys/bus/event_source/devices/"
+     */
+    while ((dp = readdir(dfd)) != NULL)
+    {
+        /*
+         * Skip . and ..
+         */
+        if (strcmp(".", dp->d_name) == 0 || strcmp("..", dp->d_name) == 0)
+        {
+            continue;
+        }
+
+        if (is_cpu)
+        {
+            if (strcmp(dp->d_name, "cpu") == 0)
+            {
+                class->num_instances++;
+                class->instances =
+                    realloc(class->instances, sizeof(struct pmu_instance) * class->num_instances);
+
+                class->instances[class->num_instances - 1].name = strdup("cpu");
+                class->instances[class->num_instances - 1].cpus = all_cpus();
+
+                return 0;
+            }
+
+            char* full_path = concat_path(pmu_devices_base, dp->d_name);
+
+            struct range_list cpus;
+            if (get_cpus_for(full_path, &cpus) == -1)
+            {
+                free(full_path);
+                continue;
+            }
+            free(full_path);
+
+            class->num_instances++;
+
+            class->instances =
+                realloc(class->instances, sizeof(struct pmu_instance) * class->num_instances);
+            class->instances[class->num_instances - 1].name = strdup(dp->d_name);
+            class->instances[class->num_instances - 1].cpus = cpus;
+        }
+        else
+        {
+            /*
+             * There can be multiple instances of some PMUs per system. e.g.
+             * one memory channel interface PMU instance per memory channel of the processor.
+             *
+             * These folders have a name of the form PMU_NAME(_[0-9]+)?
+             *
+             * To check if the current folder is an instance of the given PMU class,
+             * We are dealing with uncore pmus here.
+             * first check if class->name is a true prefix of dp->d_name
+             *
+             */
+            if (strncmp(dp->d_name, class->name, strlen(class->name)) != 0)
+            {
+                continue;
+            }
+
+            /*
+             * Check for exact matches (e.g. dp->d_name == class->name)
+             *
+             * For example, on Intel Alderlake there is a cpu_atom PMU class and
+             * exactly one cpu_atom PMU instance.
+             *
+             */
+            if (strlen(dp->d_name) != strlen(class->name))
+            {
+                /*
+                 * Ok, class->name is shorter than dp->d_name.
+                 *
+                 * Check then, if we have a PMU instance or an unrelated PMU class
+                 * that class->name is a prefix of.
+                 *
+                 * e.g., for a PMU class "foo" we are interested in "foo_0", "foo_42", but not
+                 * "foobar_0" because that is from another "foobar" PMU class.
+                 */
+                if (strlen(dp->d_name) + 2 < strlen(class->name))
+                {
+                    continue;
+                }
+
+                // check if the PMU class name is followed by a underscore...
+                if (*(dp->d_name + strlen(class->name)) != '_')
+                {
+                    continue;
+                }
+
+                // ...and then a number.
+                char* endptr;
+                errno = 0;
+                strtoul(dp->d_name + strlen(class->name) + 1, &endptr, 10);
+                if (errno != 0)
+                {
+                    continue;
+                }
+                if (*endptr != '\0')
+                {
+                    continue;
+                }
+            }
+
+            class->num_instances++;
+
+            class->instances =
+                realloc(class->instances, sizeof(struct pmu_instance) * class->num_instances);
+            class->instances[class->num_instances - 1].name = strdup(dp->d_name);
+
+            struct range cpus;
+
+            char* full_path = concat_path(pmu_devices_base, dp->d_name);
+            struct range_list range_list;
+
+            /*
+             * If either [pmu-instance-path]/cpus or [pmu-instance-path]/cpumask exists
+             * then it contains the list of CPUs for which this event can be perf_event_open'ed.
+             *
+             * Otherwise, the event is openable on all cores of the cpu.
+             */
+            if (get_cpus_for(full_path, &range_list) == -1)
+            {
+                if (get_cpumask_for(full_path, &range_list) == -1)
+                {
+                    range_list = all_cpus();
+                }
+            }
+            free(full_path);
+            class->instances[class->num_instances - 1].cpus = range_list;
+        }
+    }
+
+    closedir(dfd);
+
+    return 0;
+}
+
+/*
+ * Gets the tree of all pmus in the system.
+ *
+ * This data structure takes the following form
+ *
+ * struct pmus
+ *  |--> classes:
+ *         struct pmu_class
+ *          |--> name
+ *          \--> instances:
+ *                 struct pmu_instance
+ *                  |--> struct range_list cpus
+ *                  |--> name
+ *                  \--> entries:
+ *                        struct compact_pmu_event
+ *
+ * On success, returns 0, otherwise -1.
+ * On success, the caller is responsible for free-ing the struct pmus using
+ * free_pmus()
+ */
+int get_pmus(struct pmus* pmus)
+{
+    pmus->num_classes = 0;
+    pmus->classes = NULL;
+
+    struct perf_cpu cpu;
+    // TODO: even on heterogeneous systems (i.e. Intel Alderlake with P/E Cores)
+    // every CPU returns the same list of events. So assume (for now) that is the
+    // same for every CPU, regardless of architecture
+    //
+    // TODO: What about heterogeneous multi-cpu systems, are they even allowed?
+    cpu.cpu = 0;
+    const struct pmu_events_map* map = map_for_cpu(cpu);
+
+    for (int cur_pmu = 0; cur_pmu < map->event_table.num_pmus; cur_pmu++)
+    {
+        const char* pmu_name = get_pmu_name(map->event_table.pmus[cur_pmu]);
+
+        struct pmu_class class;
+        class.name = pmu_name;
+        if (get_all_pmu_instances_for(&class) == -1)
+        {
+            continue;
+        }
+
+        if (class.num_instances == 0)
+        {
+            continue;
+        }
+
+        pmus->num_classes++;
+        pmus->classes = realloc(pmus->classes, sizeof(struct pmu_class) * pmus->num_classes);
+        pmus->classes[pmus->num_classes - 1] = class;
+
+        for (size_t cur_instance = 0;
+             cur_instance < pmus->classes[pmus->num_classes - 1].num_instances; cur_instance++)
+        {
+            pmus->classes[pmus->num_classes - 1].instances[cur_instance].entries =
+                map->event_table.pmus[cur_pmu].entries;
+            pmus->classes[pmus->num_classes - 1].instances[cur_instance].num_entries =
+                map->event_table.pmus[cur_pmu].num_entries;
+        }
+    }
+
+    if (pmus->num_classes == 0)
+    {
+        return -1;
+    }
+
+    return 0;
+}
+
+void free_pmu_instance(struct pmu_instance* instance)
+{
+    free_range_list(&instance->cpus);
+    free(instance->name);
+}
+
+void free_pmu_class(struct pmu_class* class)
+{
+    for (size_t cur_instance = 0; cur_instance < class->num_instances; cur_instance++)
+    {
+        free_pmu_instance(&class->instances[cur_instance]);
+    }
+    free(class->instances);
+}
+
+void free_pmus(struct pmus* pmus)
+{
+    for (int cur_pmu = 0; cur_pmu < pmus->num_classes; cur_pmu++)
+    {
+        free_pmu_class(&pmus->classes[cur_pmu]);
+    }
+    free(pmus->classes);
 }

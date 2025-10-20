@@ -136,9 +136,11 @@ int main(void)
 
     TEST_CASE("get_format_file_content works")
     {
-        struct perf_cpu cpu;
-        cpu.cpu = 0;
-        char* str = get_format_file_content("event", cpu);
+        struct pmus pmus;
+        get_pmus(&pmus);
+        REQUIRE(pmus.num_classes != 0);
+        REQUIRE(pmus.classes[0].num_instances != 0);
+        char* str = get_format_file_content("event", &pmus.classes[0].instances[0]);
         REQUIRE(str != NULL);
 
         struct config_def def;
@@ -150,16 +152,22 @@ int main(void)
 
     TEST_CASE("get_format_file_content fails for fake file")
     {
-        struct perf_cpu cpu;
-        cpu.cpu = 0;
-        char* str = get_format_file_content("foobarfoobar", cpu);
+        struct pmus pmus;
+        get_pmus(&pmus);
+        REQUIRE(pmus.num_classes != 0);
+        REQUIRE(pmus.classes[0].num_instances != 0);
+
+        char* str = get_format_file_content("foobarfoobar", &pmus.classes[0].instances[0]);
         REQUIRE(str == NULL);
     }
 
     TEST_CASE("read_perf_type works")
     {
-        struct perf_cpu cpu;
-        cpu.cpu = 0;
-        REQUIRE(read_perf_type(cpu) != -1);
+        struct pmus pmus;
+        get_pmus(&pmus);
+        REQUIRE(pmus.num_classes != 0);
+        REQUIRE(pmus.classes[0].num_instances != 0);
+
+        REQUIRE(read_perf_type(&pmus.classes[0].instances[0]) != -1);
     }
 }
