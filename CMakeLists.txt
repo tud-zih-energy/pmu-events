@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.11)
 project(pmu-events VERSION 0.0.1)
 
+
 if(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "x86_64")
     add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/pmu-events.c
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/jevents.py x86 all ${CMAKE_CURRENT_SOURCE_DIR}/arch ${CMAKE_CURRENT_BINARY_DIR}/pmu-events.c
@@ -14,6 +15,8 @@ else()
 endif()
 
 add_library(pmu-events ${CMAKE_CURRENT_BINARY_DIR}/pmu-events.c src/pmu-events.c)
+set_property(TARGET pmu-events PROPERTY C_STANDARD 11)
+
 target_include_directories(pmu-events PUBLIC include)
 
 if(PROJECT_IS_TOP_LEVEL)
@@ -22,7 +25,7 @@ if(PROJECT_IS_TOP_LEVEL)
 
     enable_testing()
     add_test(NAME Tests COMMAND ./tests)
-    
+
     add_executable(pmu-events-example examples/main.c)
     target_link_libraries(pmu-events-example pmu-events)
 endif()

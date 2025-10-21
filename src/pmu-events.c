@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <wchar.h>
 
 /*
  * Base path for all PMU devices in sysfs[:we
@@ -35,10 +36,48 @@ static char* concat_path(const char* base, const char* filename)
     return path;
 }
 
+void free_pmu_instance(struct pmu_instance* instance)
+{
+    if (instance == NULL)
+    {
+        return;
+    }
+    free_range_list(&instance->cpus);
+    free(instance->name);
+}
+
+void free_pmu_class(struct pmu_class* class)
+{
+    if (class == NULL)
+    {
+        return;
+    }
+
+    for (size_t cur_instance = 0; cur_instance < class->num_instances; cur_instance++)
+    {
+        free_pmu_instance(&class->instances[cur_instance]);
+    }
+    free(class->instances);
+}
+
+void free_pmus(struct pmus* pmus)
+{
+    if (pmus == NULL)
+    {
+        return;
+    }
+    for (int cur_pmu = 0; cur_pmu < pmus->num_classes; cur_pmu++)
+    {
+        free_pmu_class(&pmus->classes[cur_pmu]);
+    }
+    free(pmus->classes);
+}
+
 /*
  * For a pmu_table_entry, get the name of the pmu
  */
 const char* get_pmu_name(struct pmu_table_entry entry);
+
 /*
  * Checks if "num" is in any of the ranges in range_list
  */
@@ -218,7 +257,7 @@ int parse_config_def(const char* term, struct config_def* def)
 int parse_range_list(const char* term, struct range_list* list)
 {
     char* new_term = strdup(term);
-    char* next_comma = new_term;
+    char* next_comma = NULL;
     char* cur_range = new_term;
 
     list->len = 0;
@@ -226,12 +265,15 @@ int parse_range_list(const char* term, struct range_list* list)
     do
     {
         list->len++;
-        list->ranges = realloc(list->ranges, sizeof(struct range) * list->len);
-        if (list->ranges == NULL)
+
+        struct range* tmp = realloc(list->ranges, sizeof(struct range) * list->len);
+        if (tmp == NULL)
         {
+            free(list->ranges);
             free(new_term);
             return -1;
         }
+        list->ranges = tmp;
 
         next_comma = strchr(cur_range, ',');
         if (next_comma != NULL)
@@ -258,6 +300,10 @@ int parse_range_list(const char* term, struct range_list* list)
  */
 void free_range_list(struct range_list* list)
 {
+    if (list == NULL)
+    {
+        return;
+    }
     free(list->ranges);
 }
 
@@ -363,7 +409,14 @@ int parse_assignment_list(const char* str, struct assignment_list* list)
         }
 
         list->len++;
-        list->assignments = realloc(list->assignments, list->len * sizeof(struct assignment));
+        struct assignment* tmp = realloc(list->assignments, list->len * sizeof(struct assignment));
+        if (tmp == NULL)
+        {
+            free(list->assignments);
+            free(new_str);
+            return -1;
+        }
+        list->assignments = tmp;
 
         if (parse_assignment(cur_range, &list->assignments[list->len - 1]) == -1)
         {
@@ -786,9 +839,17 @@ static int get_all_pmu_instances_for(struct pmu_class* class)
             if (strcmp(dp->d_name, "cpu") == 0)
             {
                 class->num_instances++;
-                class->instances =
+
+                struct pmu_instance* tmp =
                     realloc(class->instances, sizeof(struct pmu_instance) * class->num_instances);
 
+                if (tmp == NULL)
+                {
+                    free_pmu_class(class);
+                    closedir(dfd);
+                    return -1;
+                }
+                class->instances = tmp;
                 class->instances[class->num_instances - 1].name = strdup("cpu");
                 class->instances[class->num_instances - 1].cpus = all_cpus();
 
@@ -807,8 +868,17 @@ static int get_all_pmu_instances_for(struct pmu_class* class)
 
             class->num_instances++;
 
-            class->instances =
+            struct pmu_instance* tmp =
                 realloc(class->instances, sizeof(struct pmu_instance) * class->num_instances);
+
+            if (tmp == NULL)
+            {
+                free_range_list(&cpus);
+                free_pmu_class(class);
+                closedir(dfd);
+                return -1;
+            }
+            class->instances = tmp;
             class->instances[class->num_instances - 1].name = strdup(dp->d_name);
             class->instances[class->num_instances - 1].cpus = cpus;
         }
@@ -875,8 +945,16 @@ static int get_all_pmu_instances_for(struct pmu_class* class)
 
             class->num_instances++;
 
-            class->instances =
+            struct pmu_instance* tmp =
                 realloc(class->instances, sizeof(struct pmu_instance) * class->num_instances);
+
+            if (tmp == NULL)
+            {
+                free_pmu_class(class);
+                closedir(dfd);
+                return -1;
+            }
+            class->instances = tmp;
             class->instances[class->num_instances - 1].name = strdup(dp->d_name);
 
             struct range cpus;
@@ -958,7 +1036,15 @@ int get_pmus(struct pmus* pmus)
         }
 
         pmus->num_classes++;
-        pmus->classes = realloc(pmus->classes, sizeof(struct pmu_class) * pmus->num_classes);
+        struct pmu_class* tmp =
+            realloc(pmus->classes, sizeof(struct pmu_class) * pmus->num_classes);
+        if (tmp == NULL)
+        {
+            free_pmu_class(&class);
+            free_pmus(pmus);
+            return -1;
+        }
+        pmus->classes = tmp;
         pmus->classes[pmus->num_classes - 1] = class;
 
         for (size_t cur_instance = 0;
@@ -977,28 +1063,4 @@ int get_pmus(struct pmus* pmus)
     }
 
     return 0;
-}
-
-void free_pmu_instance(struct pmu_instance* instance)
-{
-    free_range_list(&instance->cpus);
-    free(instance->name);
-}
-
-void free_pmu_class(struct pmu_class* class)
-{
-    for (size_t cur_instance = 0; cur_instance < class->num_instances; cur_instance++)
-    {
-        free_pmu_instance(&class->instances[cur_instance]);
-    }
-    free(class->instances);
-}
-
-void free_pmus(struct pmus* pmus)
-{
-    for (int cur_pmu = 0; cur_pmu < pmus->num_classes; cur_pmu++)
-    {
-        free_pmu_class(&pmus->classes[cur_pmu]);
-    }
-    free(pmus->classes);
 }

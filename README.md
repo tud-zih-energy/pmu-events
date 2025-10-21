@@ -5,7 +5,7 @@
 The Linux tool `perf` contains information about a wealth of
 CPU PMU events.
 
-The code handling these event definitions lives in the `tools/perf/pmu-events` folder of 
+The code handling these event definitions lives in the `tools/perf/pmu-events` folder of
 the Linux source code.
 
 This library takes the code for working with those event definitions

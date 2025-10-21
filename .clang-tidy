@@ -1,0 +1,4 @@
+---
+FormatStyle: file
+Checks: 'clang-diagnostic-*,clang-analyzer-*,modernize-*,-clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling'
+...
