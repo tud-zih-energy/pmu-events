@@ -1,0 +1,42 @@
+name: Build
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+        compiler: [gcc-12, gcc-13, gcc-14, clang-16, clang-17, clang-18]
+        build-type: [Debug, RelWithDebInfo]
+        hw_breakpoint: [ON, OFF]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install clang-tidy-18 clang-format-18
+      - uses: actions/checkout@v2
+      - name: clang-format
+        run: |
+          find -name '*.c' -o -name '*.h' > pmu_src_files
+          cat pmu_src_files
+          clang-format --style=file --files=pmu_src_files --dry-run -Werror
+      - name: Run CMake configure
+        env:
+          CC: ${{ matrix.compiler }}
+        run: |
+          mkdir build
+          cd build
+          cmake .. -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+      - name: Build
+        run: |
+          cd build
+          make -j 2
+      - name: clang-tidy
+        run: |
+          cd build
+          run-clang-tidy-18 -warnings-as-errors '*'

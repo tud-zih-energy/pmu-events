@@ -838,10 +838,9 @@ static int get_all_pmu_instances_for(struct pmu_class* class)
         {
             if (strcmp(dp->d_name, "cpu") == 0)
             {
-                class->num_instances++;
 
-                struct pmu_instance* tmp =
-                    realloc(class->instances, sizeof(struct pmu_instance) * class->num_instances);
+                struct pmu_instance* tmp = realloc(
+                    class->instances, sizeof(struct pmu_instance) * (class->num_instances + 1));
 
                 if (tmp == NULL)
                 {
@@ -850,6 +849,7 @@ static int get_all_pmu_instances_for(struct pmu_class* class)
                     return -1;
                 }
                 class->instances = tmp;
+                class->num_instances++;
                 class->instances[class->num_instances - 1].name = strdup("cpu");
                 class->instances[class->num_instances - 1].cpus = all_cpus();
 
@@ -866,10 +866,8 @@ static int get_all_pmu_instances_for(struct pmu_class* class)
             }
             free(full_path);
 
-            class->num_instances++;
-
             struct pmu_instance* tmp =
-                realloc(class->instances, sizeof(struct pmu_instance) * class->num_instances);
+                realloc(class->instances, sizeof(struct pmu_instance) * (class->num_instances + 1));
 
             if (tmp == NULL)
             {
@@ -879,6 +877,8 @@ static int get_all_pmu_instances_for(struct pmu_class* class)
                 return -1;
             }
             class->instances = tmp;
+            class->num_instances++;
+
             class->instances[class->num_instances - 1].name = strdup(dp->d_name);
             class->instances[class->num_instances - 1].cpus = cpus;
         }
@@ -943,10 +943,8 @@ static int get_all_pmu_instances_for(struct pmu_class* class)
                 }
             }
 
-            class->num_instances++;
-
             struct pmu_instance* tmp =
-                realloc(class->instances, sizeof(struct pmu_instance) * class->num_instances);
+                realloc(class->instances, (sizeof(struct pmu_instance) * class->num_instances + 1));
 
             if (tmp == NULL)
             {
@@ -955,6 +953,7 @@ static int get_all_pmu_instances_for(struct pmu_class* class)
                 return -1;
             }
             class->instances = tmp;
+            class->num_instances++;
             class->instances[class->num_instances - 1].name = strdup(dp->d_name);
 
             struct range cpus;

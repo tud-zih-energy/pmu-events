@@ -10,7 +10,7 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
-void print_pmu_event(struct pmu_event *ev)
+void print_pmu_event(struct pmu_event* ev)
 {
     printf("  NAME: %s\n", ev->name);
     printf("    compat: %s\n", ev->compat);
@@ -28,7 +28,7 @@ void print_pmu_event(struct pmu_event *ev)
         printf("    Is perpkg\n");
     }
 
-    if(ev->deprecated)
+    if (ev->deprecated)
     {
         printf("    Is deprecated\n");
     }
@@ -101,7 +101,7 @@ void list_events()
 
 bool stop = false;
 
-void sighandler(int signal [[maybe_unused]])
+void signal_handler(int signal)
 {
     stop = true;
 }
@@ -162,6 +162,7 @@ void read_event(char* ev)
         {
             free_pmus(&pmus);
             fprintf(stderr, "Can not generate perf_event_attr for: %s!\n", evs[ev_id].ev.name);
+            free(evs);
             return;
         }
     }
@@ -187,7 +188,7 @@ void read_event(char* ev)
     }
     fprintf(stderr, "Every second until Ctrl+C\n");
 
-    signal(SIGTERM, sighandler);
+    signal(SIGTERM, signal_handler);
     while (!stop)
     {
         long long count;

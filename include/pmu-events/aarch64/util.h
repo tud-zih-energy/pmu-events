@@ -493,6 +493,7 @@ char* get_cpuid_str(struct perf_cpu cpu)
     res = get_cpuid(buf, MIDR_SIZE, cpu);
     if (res)
     {
+        free(buf);
         buf = NULL;
     }
 
