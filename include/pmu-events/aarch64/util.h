@@ -389,6 +389,7 @@ struct perf_cpu_map* perf_cpu_map__alloc(int nr_cpus)
         return NULL;
 
     cpus = malloc(sizeof(*cpus) + sizeof(struct perf_cpu) * nr_cpus);
+    cpus->nr = nr_cpus;
     return cpus;
 }
 
@@ -400,8 +401,6 @@ static struct perf_cpu_map* cpu_map__new_sysconf(void)
     nr_cpus = sysconf(_SC_NPROCESSORS_ONLN);
     if (nr_cpus < 0)
         return NULL;
-
-    nr_cpus_conf = sysconf(_SC_NPROCESSORS_CONF);
 
     cpus = perf_cpu_map__alloc(nr_cpus);
     if (cpus != NULL)
@@ -476,8 +475,12 @@ int get_cpuid(char* buf, size_t sz, struct perf_cpu cpu)
         int ret = _get_cpuid(buf, sz, cpu);
 
         if (ret == 0)
+        {
+            free(cpus);
             return 0;
+        }
     }
+    free(cpus);
     return EINVAL;
 }
 
