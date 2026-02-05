@@ -944,8 +944,8 @@ static int get_all_pmu_instances_for(struct pmu_class* class)
                 }
             }
 
-            struct pmu_instance* tmp =
-                realloc(class->instances, (sizeof(struct pmu_instance) * class->num_instances + 1));
+            struct pmu_instance* tmp = realloc(
+                class->instances, (sizeof(struct pmu_instance) * (class->num_instances + 1)));
 
             if (tmp == NULL)
             {
