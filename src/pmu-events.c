@@ -853,6 +853,7 @@ static int get_all_pmu_instances_for(struct pmu_class* class)
                 class->instances[class->num_instances - 1].name = strdup("cpu");
                 class->instances[class->num_instances - 1].cpus = all_cpus();
 
+                closedir(dfd);
                 return 0;
             }
 
