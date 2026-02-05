@@ -148,6 +148,8 @@ int main(void)
 
         free(str);
         free_config_def(&def);
+
+        free_pmus(&pmus);
     }
 
     TEST_CASE("get_format_file_content fails for fake file")
@@ -159,6 +161,8 @@ int main(void)
 
         char* str = get_format_file_content("foobarfoobar", &pmus.classes[0].instances[0]);
         REQUIRE(str == NULL);
+
+        free_pmus(&pmus);
     }
 
     TEST_CASE("read_perf_type works")
@@ -169,5 +173,7 @@ int main(void)
         REQUIRE(pmus.classes[0].num_instances != 0);
 
         REQUIRE(read_perf_type(&pmus.classes[0].instances[0]) != -1);
+
+        free_pmus(&pmus);
     }
 }
